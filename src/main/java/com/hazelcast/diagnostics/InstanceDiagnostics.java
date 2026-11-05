@@ -339,7 +339,7 @@ public class InstanceDiagnostics {
 
             String s = indexEntry.file.load(indexEntry.offset, indexEntry.length);
             int indexOfLastEquals = s.lastIndexOf('=');
-            String value = s.substring(indexOfLastEquals + 1).replace("]", "");
+            String value = s.substring(indexOfLastEquals + 1).replace("]", "").replace(",", "").trim();
             int indexDot = value.indexOf('.');
             Number n;
             if (indexDot == -1) {
