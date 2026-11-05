@@ -16,6 +16,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.GridLayout;
 import java.awt.Label;
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -92,20 +93,41 @@ public class DashboardPane {
         cpuPlot.setTickLabelPaint(Color.ORANGE);
     }
 
-    private void updateHeapPlot(ValueDataset heapDataset, Long maxHeap) {
+    private void updateHeapPlot(long maxUsedHeapBytes, long totalMemoryBytes) {
+        long referenceBytes = totalMemoryBytes > 0 ? totalMemoryBytes : maxUsedHeapBytes;
+
+        double divisor;
+        String unit;
+        if (referenceBytes >= 1024L * 1024 * 1024) {
+            divisor = 1024.0 * 1024.0 * 1024.0;
+            unit = "GB";
+        } else if (referenceBytes >= 1024L * 1024) {
+            divisor = 1024.0 * 1024.0;
+            unit = "MB";
+        } else if (referenceBytes >= 1024L) {
+            divisor = 1024.0;
+            unit = "KB";
+        } else {
+            divisor = 1.0;
+            unit = "B";
+        }
+
+        double maxHeap = referenceBytes > 0 ? (referenceBytes / divisor) : 100.0;
+        double usedHeap = maxUsedHeapBytes / divisor;
 
         heapPlot.clearIntervals();
-        heapPlot.setDataset(heapDataset);
+        heapPlot.setRange(new Range(0.0, Math.max(1.0, maxHeap)));
+        heapPlot.setUnits(" " + unit);
+        heapPlot.setTickLabelFormat(new DecimalFormat("#,##0.#"));
+        heapPlot.setDataset(new DefaultValueDataset(usedHeap));
 
         heapPlot.addInterval(new MeterInterval("Low", new Range(0.00, (80.0 * maxHeap) / 100), Color.YELLOW, new BasicStroke(2.0f), null));
         heapPlot.setDialOutlinePaint(Color.white);
-        heapPlot.addInterval(new MeterInterval("High", new Range((20.0 * maxHeap) / 100, maxHeap), Color.RED, new BasicStroke(2.0f), null));
-
+        heapPlot.addInterval(new MeterInterval("High", new Range((80.0 * maxHeap) / 100, maxHeap), Color.RED, new BasicStroke(2.0f), null));
     }
 
     private void configureHeapPlot() {
-
-        heapPlot.setUnits("Bytes, Max Heap Usage");
+        heapPlot.setUnits(" MB");
         heapPlot.setTickLabelsVisible(true);
         heapPlot.setDialShape(DialShape.CHORD);
         heapPlot.setValuePaint(Color.BLUE);
@@ -167,8 +189,8 @@ public class DashboardPane {
             }
         }
 
-        heapDataset = new DefaultValueDataset(maxUsedHeap);
-        updateHeapPlot(heapDataset, totalMemory);
+        long referenceTotal = totalMemory > 0 ? totalMemory : maxHeap;
+        updateHeapPlot(maxUsedHeap, referenceTotal);
         cpuDataset = new DefaultValueDataset(maxCPULoad);
         updateCPUPlot(cpuDataset);
     }
