@@ -43,13 +43,16 @@ public class BuildInfoPane {
         String[] lines = it.next().getValue().split("\\n");
         for (String line : lines) {
             line = line.trim();
+            if (line.endsWith("]")) {
+                line = line.substring(0, line.length() - 1).trim();
+            }
             int indexEquals = line.indexOf('=');
             if (indexEquals == -1) {
                 continue;
             }
 
-            String key = line.substring(0, indexEquals);
-            String value = line.substring(indexEquals + 1).replace("]", "");
+            String key = line.substring(0, indexEquals).trim();
+            String value = line.substring(indexEquals + 1);
             model.addRow(new Object[]{key, value});
         }
     }
