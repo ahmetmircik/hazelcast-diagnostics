@@ -53,12 +53,13 @@ public class TimeSelectorPane {
                 endMs = instanceDiagnostics.endMs();
             }
         }
-        durationMs = endMs - startMs;
+        durationMs = Math.max(0, endMs - startMs);
+        int maxSliderValue = (int) Math.min(Integer.MAX_VALUE, durationMs);
 
         BoundedRangeModel model = rangeSlider.getModel();
         model.setMinimum(0);
-        model.setMaximum((int) durationMs);
+        model.setMaximum(maxSliderValue);
         model.setValue(0);
-        model.setExtent((int) durationMs);
+        model.setExtent(maxSliderValue);
     }
 }
