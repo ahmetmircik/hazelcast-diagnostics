@@ -409,9 +409,11 @@ public class InstanceDiagnostics {
         public String load(int offset, int length) {
             byte[] bytes = new byte[length];
             try {
-                randomAccessFile.seek(offset);
-                if (randomAccessFile.read(bytes, 0, length) != length) {
-                    throw new RuntimeException();
+                synchronized (this) {
+                    randomAccessFile.seek(offset);
+                    if (randomAccessFile.read(bytes, 0, length) != length) {
+                        throw new RuntimeException();
+                    }
                 }
                 return new String(bytes, StandardCharsets.UTF_8);
             } catch (IOException e) {
