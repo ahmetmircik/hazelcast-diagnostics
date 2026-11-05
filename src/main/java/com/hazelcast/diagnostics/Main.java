@@ -26,8 +26,7 @@ public class Main {
         for (Enumeration<Object> e = defaults.keys(); e.hasMoreElements(); ) {
             Object key = e.nextElement();
             Object value = defaults.get(key);
-            if (value instanceof Font) {
-                Font font = (Font) value;
+            if (value instanceof Font font) {
                 int newSize = Math.round(font.getSize() * multiplier);
                 if (value instanceof FontUIResource) {
                     defaults.put(key, new FontUIResource(font.getName(), font.getStyle(), newSize));
