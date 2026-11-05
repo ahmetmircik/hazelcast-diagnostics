@@ -5,8 +5,6 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 
-import static java.util.stream.Collectors.toList;
-
 public final class DiagnosticsLoader {
 
     private DiagnosticsLoader() {
@@ -18,7 +16,7 @@ public final class DiagnosticsLoader {
             return threadPool.submit(
                     () -> directories.stream().parallel()
                                      .map(directory -> new InstanceDiagnostics(directory).analyze())
-                                     .collect(toList())
+                                     .toList()
             ).get();
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException(e);
