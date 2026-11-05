@@ -431,39 +431,9 @@ public class InstanceDiagnostics {
         }
     }
 
-    private static class DiagnosticKey {
-        private final DiagnosticType type;
-        private final String name;
-
-        private DiagnosticKey(DiagnosticType type, String name) {
-            this.type = type;
-            this.name = name;
-        }
-
+    private record DiagnosticKey(DiagnosticType type, String name) {
         private DiagnosticKey(DiagnosticType type) {
             this(type, null);
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) {
-                return true;
-            }
-            if (o == null || getClass() != o.getClass()) {
-                return false;
-            }
-            DiagnosticKey that = (DiagnosticKey) o;
-            return type == that.type && Objects.equals(name, that.name);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(type, name);
-        }
-
-        @Override
-        public String toString() {
-            return "DiagnosticKey{" + "type=" + type + ", name='" + name + '\'' + '}';
         }
     }
 
@@ -475,17 +445,7 @@ public class InstanceDiagnostics {
         }
     }
 
-    private static class DiagnosticsIndexEntry {
-        private final DiagnosticsFile file;
-        private final int offset;
-        private final int length;
-
-        private DiagnosticsIndexEntry(DiagnosticsFile file, int offset, int length) {
-            this.file = file;
-            this.offset = offset;
-            this.length = length;
-        }
-
+    private record DiagnosticsIndexEntry(DiagnosticsFile file, int offset, int length) {
         @Override
         public String toString() {
             return "DiagnosticsIndexEntry{" + "file=" + file.file + ", offset=" + offset + ", length=" + length + '}';
