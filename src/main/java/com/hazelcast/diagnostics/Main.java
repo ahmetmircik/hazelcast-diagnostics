@@ -10,10 +10,24 @@ public class Main {
 
     public static void main(String[] args) {
         enableAntiAliasing();
+        ensureRangeSliderUI();
         incFontSize(1.5f);
 
         MainWindow mainWindow = new MainWindow();
         mainWindow.getJFrame().setVisible(true);
+    }
+
+    /**
+     * Newer JDKs on macOS declare com.apple.laf.AquaSliderUI final or restrict access, which causes
+     * JIDE's AquaRangeSliderUI subclass to fail with IncompatibleClassChangeError or IllegalAccessError.
+     * When that happens, fall back to BasicRangeSliderUI so RangeSlider initializes cleanly on all JDKs.
+     */
+    private static void ensureRangeSliderUI() {
+        try {
+            Class.forName("com.jidesoft.plaf.aqua.AquaRangeSliderUI");
+        } catch (Throwable t) {
+            UIManager.put("RangeSliderUI", "com.jidesoft.plaf.basic.BasicRangeSliderUI");
+        }
     }
 
     private static void enableAntiAliasing() {
