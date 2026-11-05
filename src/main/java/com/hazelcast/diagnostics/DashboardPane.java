@@ -147,17 +147,17 @@ public class DashboardPane {
 
             while (iteratorUsedHeap.hasNext()) {
                 Map.Entry<Long, Number> entry = iteratorUsedHeap.next();
-                maxUsedHeap = entry.getValue().longValue() > maxUsedHeap ? entry.getValue().longValue() : maxUsedHeap;
+                maxUsedHeap = Math.max(entry.getValue().longValue(), maxUsedHeap);
             }
 
             while (iteratorMaxHeap.hasNext()) {
                 Map.Entry<Long, Number> entry = iteratorMaxHeap.next();
-                maxHeap = entry.getValue().longValue() > maxUsedHeap ? entry.getValue().longValue() : maxUsedHeap;
+                maxHeap = Math.max(entry.getValue().longValue(), maxHeap);
             }
 
             while (iteratorCPULoad.hasNext()) {
                 Map.Entry<Long, Number> entry = iteratorCPULoad.next();
-                maxCPULoad = entry.getValue().doubleValue() > maxCPULoad ? entry.getValue().doubleValue() : maxCPULoad;
+                maxCPULoad = Math.max(entry.getValue().doubleValue(), maxCPULoad);
             }
 
             while (iteratorTotalMemory.hasNext()) {
