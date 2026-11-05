@@ -60,18 +60,25 @@ public class InvocationsPlane {
             }
 
             TimeSeries series = new TimeSeries(diagnostics.getDirectory().getName());
+            boolean first = true;
             long previousMs = 0;
             long previousCount = 0;
             while (iterator.hasNext()) {
                 try {
                     Map.Entry<Long, Number> entry = iterator.next();
                     long currentMs = entry.getKey();
-
                     long count = entry.getValue().longValue();
-                    long delta = count - previousCount;
-                    long durationMs = currentMs - previousMs;
-                    double throughput = (delta * 1000d) / durationMs;
-                    series.add(new FixedMillisecond(currentMs), throughput);
+
+                    if (first) {
+                        first = false;
+                    } else {
+                        long delta = count - previousCount;
+                        long durationMs = currentMs - previousMs;
+                        if (durationMs > 0 && delta >= 0) {
+                            double throughput = (delta * 1000d) / durationMs;
+                            series.add(new FixedMillisecond(currentMs), throughput);
+                        }
+                    }
                     previousMs = currentMs;
                     previousCount = count;
                 } catch (SeriesException e) {
