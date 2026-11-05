@@ -136,14 +136,15 @@ public class InstancesPane {
 
         private final List<File> directories;
         private final List<InstanceDiagnostics> instances;
-        private final Set<Integer> selectedInstances;
+        // tracked by directory (not by list index), since indices shift when elements are removed
+        private final Set<File> selectedDirectories;
 
         public InstanceListModel(MainWindow window) {
             this.window = window;
 
             this.directories = new ArrayList<>();
             this.instances = new ArrayList<>();
-            this.selectedInstances = new HashSet<>();
+            this.selectedDirectories = new HashSet<>();
         }
 
         void addElements(File... dirs) {
@@ -171,10 +172,13 @@ public class InstancesPane {
         void removeElements(int... indices) {
             for (int i = indices.length - 1; i >= 0; i--) {
                 int index = indices[i];
-                fireIntervalRemoved(this, index, index);
-
+                // update the model first, then notify listeners (Swing contract)
+                File directory = directories.remove(index);
                 instances.remove(index);
-                directories.remove(index);
+                if (selectedDirectories.remove(directory)) {
+                    window.remove(directory);
+                }
+                fireIntervalRemoved(this, index, index);
             }
         }
 
@@ -197,12 +201,13 @@ public class InstancesPane {
             ListSelectionModel model = (ListSelectionModel) e.getSource();
             if (!model.getValueIsAdjusting()) {
                 for (int i = 0; i < directories.size(); i++) {
-                    if (model.isSelectedIndex(i) && selectedInstances.add(i)) {
-                        window.add(instances.get(i));
-                    }
-
-                    if (!model.isSelectedIndex(i) && selectedInstances.remove(i)) {
-                        window.remove(directories.get(i));
+                    File directory = directories.get(i);
+                    if (model.isSelectedIndex(i)) {
+                        if (selectedDirectories.add(directory)) {
+                            window.add(instances.get(i));
+                        }
+                    } else if (selectedDirectories.remove(directory)) {
+                        window.remove(directory);
                     }
                 }
             }

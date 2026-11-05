@@ -22,6 +22,8 @@ public final class DiagnosticsLoader {
             ).get();
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException(e);
+        } finally {
+            threadPool.shutdown();
         }
     }
 }

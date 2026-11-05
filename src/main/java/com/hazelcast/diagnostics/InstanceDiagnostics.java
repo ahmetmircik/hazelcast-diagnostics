@@ -1,10 +1,12 @@
 package com.hazelcast.diagnostics;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -62,66 +64,82 @@ public class InstanceDiagnostics {
     }
 
     private void analyze(DiagnosticsFile file) throws IOException {
-        FileReader fr = new FileReader(file.file);
-        int depth = 0;
-        int offset = 0;
-        int startOffset = 0;
-        char[] buffer = new char[1024];
-        StringBuilder sb = new StringBuilder();
+        // Read raw bytes so that 'offset' is a byte offset, matching RandomAccessFile.seek in DiagnosticsFile.load.
+        // Structural chars ('[', ']', '\n', ' ', digits) are single-byte in UTF-8, and multibyte UTF-8 sequences
+        // only contain bytes >= 0x80, so scanning byte-by-byte is safe.
+        try (InputStream in = new FileInputStream(file.file)) {
+            int depth = 0;
+            int offset = 0;
+            int startOffset = 0;
+            byte[] buffer = new byte[8192];
+            StringBuilder sb = new StringBuilder();
 
-        for (; ; ) {
-            int read = fr.read(buffer);
-            if (read == -1) {
-                break;
-            }
-            for (int k = 0; k < read; k++) {
-                char c = buffer[k];
-                sb.append(c);
-                if (c == '\n') {
-                    if (depth == 0) {
-                        startOffset = offset;
-                    }
-                } else if (c == '[') {
-                    depth++;
-                } else if (c == ']') {
-                    depth--;
-                    if (depth == 0) {
-                        analyze(sb, file, offset, startOffset);
-                        sb.setLength(0);
-                    }
+            for (; ; ) {
+                int read = in.read(buffer);
+                if (read == -1) {
+                    break;
                 }
-                offset++;
+                for (int k = 0; k < read; k++) {
+                    char c = (char) (buffer[k] & 0xFF);
+                    sb.append(c);
+                    if (c == '\n') {
+                        if (depth == 0) {
+                            startOffset = offset;
+                            sb.setLength(0);
+                        }
+                    } else if (c == '[') {
+                        depth++;
+                    } else if (c == ']') {
+                        if (depth > 0) {
+                            depth--;
+                            if (depth == 0) {
+                                analyze(sb, file, offset, startOffset);
+                                sb.setLength(0);
+                            }
+                        }
+                    }
+                    offset++;
+                }
             }
         }
     }
 
     private void analyze(StringBuilder sb, DiagnosticsFile file, int offset, int startOffset) {
+        int closeType = sb.indexOf("[");
+        if (closeType == -1) {
+            return;
+        }
+
         int spaces = 0;
         long timestamp = 0;
-        int k;
-        for (k = 0; k < sb.length(); k++) {
-            char c = sb.charAt(k);
-            if (c == ' ') {
+        int k = 0;
+        for (int i = 0; i < closeType; i++) {
+            char c = sb.charAt(i);
+            if (c == '\n' || c == '\r') {
+                spaces = 0;
+                timestamp = 0;
+                k = i + 1;
+            } else if (c == ' ') {
                 spaces++;
-            } else if (spaces == 2) {
+                k = i + 1;
+            } else if (spaces == 2 && Character.isDigit(c)) {
                 timestamp = timestamp * 10 + Character.getNumericValue(c);
             } else if (spaces == 3) {
+                k = i;
                 break;
             }
         }
 
-        int closeType = sb.indexOf("[");
-        DiagnosticType type;
-        if (closeType == -1) {
-            type = DiagnosticType.TYPE_UNKNOWN;
-        } else {
-            type = DiagnosticType.from(sb.substring(k, closeType));
-        }
+        DiagnosticType type = DiagnosticType.from(sb.substring(k, closeType));
 
         if (type == DiagnosticType.TYPE_UNKNOWN) {
             System.out.println("------------------------------------");
             System.out.println(sb);
             System.out.println("------------------------------------");
+        }
+
+        if (timestamp <= 0) {
+            return;
         }
 
         if (timestamp > file.endMs) {
@@ -143,6 +161,9 @@ public class InstanceDiagnostics {
         if (DiagnosticType.TYPE_METRIC.equals(type)) {
             int indexLastEquals = sb.lastIndexOf("=");
             int indexFirstSquareBracket = sb.indexOf("[");
+            if (indexFirstSquareBracket == -1 || indexLastEquals <= indexFirstSquareBracket + 1) {
+                return;
+            }
             String metricName = sb.substring(indexFirstSquareBracket + 1, indexLastEquals).intern();
             availableMetrics.add(metricName);
             diagnosticKey = new DiagnosticKey(type, metricName);
@@ -160,13 +181,46 @@ public class InstanceDiagnostics {
 
     private List<DiagnosticsFile> diagnosticsFiles() {
         List<DiagnosticsFile> files = new ArrayList<>();
-        for (File file : directory.listFiles()) {
+        File[] listFiles = directory.listFiles();
+        if (listFiles == null) {
+            return files;
+        }
+        for (File file : listFiles) {
             String name = file.getName();
-            if (name.startsWith("diagnostics-")) {
+            if (file.isFile() && name.startsWith("diagnostics-")) {
+                if (!isTextFile(file)) {
+                    System.err.println("Skipping binary/compressed diagnostics file (decompress it first): " + file);
+                    continue;
+                }
                 files.add(new DiagnosticsFile(file));
             }
         }
         return files;
+    }
+
+    /**
+     * Detects compressed (gzip/zip/etc.) or otherwise binary files, which can't be indexed by byte offset.
+     */
+    private static boolean isTextFile(File file) {
+        byte[] head = new byte[4096];
+        int n;
+        try (InputStream in = new FileInputStream(file)) {
+            n = in.readNBytes(head, 0, head.length);
+        } catch (IOException e) {
+            return false;
+        }
+        if (n >= 2 && (head[0] & 0xFF) == 0x1F && (head[1] & 0xFF) == 0x8B) {
+            return false; // gzip
+        }
+        if (n >= 4 && head[0] == 'P' && head[1] == 'K' && head[2] == 3 && head[3] == 4) {
+            return false; // zip
+        }
+        for (int i = 0; i < n; i++) {
+            if (head[i] == 0) {
+                return false; // NUL byte => binary
+            }
+        }
+        return true;
     }
 
     public long startMs() {
@@ -213,7 +267,7 @@ public class InstanceDiagnostics {
         TYPE_SYSTEM_PROPERTIES("SystemProperties"),
         TYPE_CONFIG_PROPERTIES("ConfigProperties"),
         TYPE_SLOW_OPERATIONS("SlowOperations"),
-        TYPE_INVOCATIONS("Invocations"),
+        TYPE_INVOCATIONS("Invocations", "PendingInvocations"),
         TYPE_INVOCATION_PROFILER("InvocationProfiler"),
         TYPE_OPERATION_PROFILER("OperationsProfiler"),
         TYPE_OPERATION_THREAD_SAMPLES("OperationThreadSamples"),
@@ -223,7 +277,7 @@ public class InstanceDiagnostics {
         TYPE_CLUSTER_VERSION_CHANGE("ClusterVersionChanged"),
         TYPE_LIFECYCLE("Lifecycle"),
         TYPE_WAN("WAN"),
-        TYPE_HEARTBEAT("OperationHeartbeat");
+        TYPE_HEARTBEAT("OperationHeartbeat", "MemberHeartbeats");
 
         private final String[] logPrefixes;
 
@@ -359,7 +413,7 @@ public class InstanceDiagnostics {
                 if (randomAccessFile.read(bytes, 0, length) != length) {
                     throw new RuntimeException();
                 }
-                return new String(bytes);
+                return new String(bytes, StandardCharsets.UTF_8);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }

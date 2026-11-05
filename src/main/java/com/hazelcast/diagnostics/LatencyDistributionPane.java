@@ -3,7 +3,13 @@ package com.hazelcast.diagnostics;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
+import org.jfree.chart.axis.CategoryAxis;
+import org.jfree.chart.axis.CategoryLabelPositions;
+import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.labels.StandardCategoryToolTipGenerator;
+import org.jfree.chart.plot.CategoryPlot;
 import org.jfree.chart.plot.PlotOrientation;
+import org.jfree.chart.renderer.category.BarRenderer;
 import org.jfree.data.category.DefaultCategoryDataset;
 
 import javax.swing.DefaultComboBoxModel;
@@ -11,6 +17,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import java.awt.BorderLayout;
+import java.text.DecimalFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -50,13 +57,33 @@ public class LatencyDistributionPane {
         });
         JPanel panel = new JPanel();
         panel.setLayout(new BorderLayout());
+        String title = type == InstanceDiagnostics.DiagnosticType.TYPE_OPERATION_PROFILER
+                ? "Operation Latency Distribution"
+                : "Invocation Latency Distribution";
+        String yAxisLabel = type == InstanceDiagnostics.DiagnosticType.TYPE_OPERATION_PROFILER
+                ? "Operations"
+                : "Invocations";
+
         JFreeChart barChart = ChartFactory.createBarChart(
-                "Latency distribution",
-                "Category",
-                "Score",
+                title,
+                "Latency Range (µs)",
+                yAxisLabel,
                 dataset,
                 PlotOrientation.VERTICAL,
                 true, true, false);
+
+        CategoryPlot plot = barChart.getCategoryPlot();
+        CategoryAxis domainAxis = plot.getDomainAxis();
+        domainAxis.setCategoryLabelPositions(CategoryLabelPositions.UP_45);
+
+        NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
+        DecimalFormat countFormat = new DecimalFormat("#,##0");
+        rangeAxis.setNumberFormatOverride(countFormat);
+
+        BarRenderer renderer = (BarRenderer) plot.getRenderer();
+        renderer.setDefaultToolTipGenerator(new StandardCategoryToolTipGenerator(
+                "{0} - {1}: {2} " + yAxisLabel.toLowerCase(), countFormat));
+
         ChartPanel chart = new ChartPanel(barChart);
         panel.add(comboBox, BorderLayout.NORTH);
         panel.add(chart, BorderLayout.CENTER);
@@ -90,7 +117,10 @@ public class LatencyDistributionPane {
                 }
 
                 for (Map.Entry<Long, Long> e : distribution.entrySet()) {
-                    dataset.addValue(e.getValue(), diagnostics.getDirectory().getName(),e.getKey());
+                    long bucketMinUs = e.getKey();
+                    long bucketMaxUs = bucketMinUs == 0 ? 1 : (bucketMinUs * 2) - 1;
+                    String categoryLabel = bucketMinUs + ".." + bucketMaxUs;
+                    dataset.addValue(e.getValue(), diagnostics.getDirectory().getName(), categoryLabel);
                 }
             }
         }
@@ -111,6 +141,10 @@ public class LatencyDistributionPane {
                 endProfile = iter.next().getValue();
                 // System.out.println(endProfile);
             }
+            if (endProfile == null) {
+                // a single snapshot in range; no delta can be computed
+                continue;
+            }
 
             try {
                Map<String,SortedMap<Long,Long>> result = calc(startProfile, endProfile);
@@ -127,9 +161,17 @@ public class LatencyDistributionPane {
 
         java.util.List<String> operationsList = new ArrayList<>(operations);
         Collections.sort(operationsList);
+
+        // replace (not append to) the operations of previously loaded instances / time ranges
+        String previouslyActive = active;
+        comboBoxModel.removeAllElements();
         for (String operation : operationsList) {
             comboBoxModel.addElement(operation);
         }
+        if (previouslyActive != null && operations.contains(previouslyActive)) {
+            comboBox.setSelectedItem(previouslyActive);
+        }
+        active = (String) comboBox.getSelectedItem();
 
         render();
     }
@@ -138,35 +180,17 @@ public class LatencyDistributionPane {
     private Map<String,SortedMap<Long,Long>> calc(String startProfileStr, String endProfileStr) throws ParseException {
         Map<String, SortedMap<Long, Long>> startLatencies = extractOperationToLatencyProfile(parseProfile(startProfileStr));
         Map<String, SortedMap<Long, Long>> endLatencies = extractOperationToLatencyProfile(parseProfile(endProfileStr));
+        // endLatencies now holds the deltas within the selected range
         subtractStartFromEnd(startLatencies, endLatencies);
 
+        // only operations that were actually invoked within the selected range
+        endLatencies.values().removeIf(profile -> !OperationNames.hasSamples(profile));
+        Map<String, String> displayNames = OperationNames.displayNames(endLatencies.keySet());
+
         Map<String,SortedMap<Long,Long>> result  = new HashMap<>();
-
         for (Entry<String, SortedMap<Long, Long>> endLatency : endLatencies.entrySet()) {
-            String operation = endLatency.getKey();
-
-            operation = operation.substring(operation.lastIndexOf('.') + 1);
-
-            SortedMap<Long, Long> startProfile = startLatencies.get(operation);
-
-            SortedMap<Long, Long> endProfile = endLatency.getValue();
-
-            for (Map.Entry<Long, Long> entry : endProfile.entrySet()) {
-                Long key = entry.getKey();
-                long endValue = entry.getValue();
-                long startValue = 0;
-                if (startProfile != null) {
-                    Long s = startProfile.get(key);
-                    if (s != null) {
-                        startValue = s;
-                    }
-                }
-
-                long delta = endValue - startValue;
-                SortedMap<Long, Long> exist = result.computeIfAbsent(operation, k -> new TreeMap<>());
-
-                exist.merge(key, delta, Long::sum);
-            }
+            String operation = displayNames.get(endLatency.getKey());
+            result.put(operation, new TreeMap<>(endLatency.getValue()));
         }
 
         return result;

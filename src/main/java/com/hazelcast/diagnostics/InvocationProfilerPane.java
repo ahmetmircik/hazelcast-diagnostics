@@ -3,15 +3,21 @@ package com.hazelcast.diagnostics;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
-import org.jfree.chart.axis.ValueAxis;
+import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.axis.NumberTickUnit;
+import org.jfree.chart.labels.StandardXYToolTipGenerator;
 import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
-import org.jfree.chart.renderer.AbstractRenderer;
+import org.jfree.chart.renderer.xy.AbstractXYItemRenderer;
 import org.jfree.data.xy.DefaultXYDataset;
 
 import javax.swing.JComponent;
 import java.awt.BasicStroke;
+import java.text.DecimalFormat;
+import java.text.FieldPosition;
+import java.text.NumberFormat;
 import java.text.ParseException;
+import java.text.ParsePosition;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -35,8 +41,8 @@ public class InvocationProfilerPane {
     public InvocationProfilerPane() {
         JFreeChart latencyChart = ChartFactory.createXYLineChart(
                 "Operation Latency Profile",
-                "Percentile (9's)",
-                "Latency",
+                "Percentile",
+                "Latency (µs)",
                 dataset,
                 PlotOrientation.VERTICAL,
                 true,
@@ -45,13 +51,19 @@ public class InvocationProfilerPane {
         pane = new ChartPanel(latencyChart);
 
         XYPlot plot = latencyChart.getXYPlot();
-        ValueAxis xAxis = plot.getDomainAxis();
-        xAxis.setRange(0, 8);
+        // x is plotted as the "number of nines" (1 = 90%, 2 = 99%, 3 = 99.9%, ...), labeled as a percentile
+        NumberAxis xAxis = (NumberAxis) plot.getDomainAxis();
+        xAxis.setRange(0, 6);
+        xAxis.setTickUnit(new NumberTickUnit(1, new PercentileFormat()));
         xAxis.setMinorTickCount(1);
         xAxis.setAutoTickUnitSelection(false);
-        AbstractRenderer renderer = (AbstractRenderer) plot.getRenderer();
+        NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
+        yAxis.setNumberFormatOverride(new DecimalFormat("#,##0"));
+        AbstractXYItemRenderer renderer = (AbstractXYItemRenderer) plot.getRenderer();
         renderer.setDefaultStroke(new BasicStroke(2.0f));
         renderer.setAutoPopulateSeriesStroke(false);
+        renderer.setDefaultToolTipGenerator(new StandardXYToolTipGenerator(
+                "{0}: {1} of invocations under {2} µs", new PercentileFormat(), new DecimalFormat("#,##0")));
     }
 
     public void setInstanceDiagnostics(Collection<InstanceDiagnostics> instanceDiagnostics) {
@@ -68,6 +80,12 @@ public class InvocationProfilerPane {
     }
 
     public void update() {
+        // remove series of previously loaded instances / previously selected time ranges
+        while (dataset.getSeriesCount() > 0) {
+            dataset.removeSeries(dataset.getSeriesKey(0));
+        }
+
+        boolean multipleInstances = instanceDiagnosticsColl.size() > 1;
         for (InstanceDiagnostics profile : instanceDiagnosticsColl) {
             Iterator<Map.Entry<Long, String>> iter = profile
                     .between(InstanceDiagnostics.DiagnosticType.TYPE_INVOCATION_PROFILER, startMs, endMs);
@@ -80,8 +98,9 @@ public class InvocationProfilerPane {
                 endProfile = iter.next().getValue();
             }
             if (endProfile != null) {
+                String seriesPrefix = multipleInstances ? profile.getDirectory().getName() + ": " : "";
                 try {
-                    updateWithProfiles(startProfile, endProfile);
+                    updateWithProfiles(seriesPrefix, startProfile, endProfile);
                 } catch (ParseException e) {
                     e.printStackTrace();
                 }
@@ -89,17 +108,20 @@ public class InvocationProfilerPane {
         }
     }
 
-    private void updateWithProfiles(String startProfileStr, String endProfileStr) throws ParseException {
+    private void updateWithProfiles(String seriesPrefix, String startProfileStr, String endProfileStr) throws ParseException {
         Map<String, SortedMap<Long, Long>> startLatencies = extractOperationToLatencyProfile(parseProfile(startProfileStr));
         Map<String, SortedMap<Long, Long>> endLatencies = extractOperationToLatencyProfile(parseProfile(endProfileStr));
         subtractStartFromEnd(startLatencies, endLatencies);
 
+        // only operations that were actually invoked within the selected range
+        endLatencies.values().removeIf(profile -> !OperationNames.hasSamples(profile));
+        Map<String, String> displayNames = OperationNames.displayNames(endLatencies.keySet());
+
         for (Entry<String, SortedMap<Long, Long>> operationAndProfile : endLatencies.entrySet()) {
-            String operation = operationAndProfile.getKey();
-            operation = operation.substring(operation.lastIndexOf('.') + 1);
+            String operation = displayNames.get(operationAndProfile.getKey());
             SortedMap<Long, Long> profile = operationAndProfile.getValue();
             double[][] percentilePlot = transposeToPercentilePlot(profile);
-            dataset.addSeries(operation, percentilePlot);
+            dataset.addSeries(seriesPrefix + operation, percentilePlot);
         }
     }
 
@@ -114,8 +136,11 @@ public class InvocationProfilerPane {
         int index = 0;
         for (Entry<Long, Long> latencyAndCount : latencyProfile.entrySet()) {
             runningCount += latencyAndCount.getValue();
-            result[0][index] = Math.log10(100.0 / (1.0 - (double) runningCount / totalCount));
-            result[1][index++] = 2.0 * latencyAndCount.getKey();
+            // x: number of nines of the percentile p (p=0.9 -> 1, p=0.99 -> 2, ...)
+            result[0][index] = Math.log10(1.0 / (1.0 - (double) runningCount / totalCount));
+            // y: exclusive upper bound (µs) of the bucket; buckets are [2^k, 2^(k+1)), except the first one [0, 2)
+            long bucketMinUs = latencyAndCount.getKey();
+            result[1][index++] = bucketMinUs == 0 ? 2.0 : 2.0 * bucketMinUs;
         }
         return result;
     }
@@ -228,6 +253,30 @@ public class InvocationProfilerPane {
                 return null;
             }
             return m;
+        }
+    }
+
+    /**
+     * Formats a "number of nines" value as a percentile: 0 -> 0%, 1 -> 90%, 2 -> 99%, 3 -> 99.9%, 2.5 -> 99.68%.
+     */
+    private static final class PercentileFormat extends NumberFormat {
+
+        @Override
+        public StringBuffer format(double nines, StringBuffer toAppendTo, FieldPosition pos) {
+            double percentile = 100.0 * (1.0 - Math.pow(10, -nines));
+            DecimalFormat format = new DecimalFormat("0");
+            format.setMaximumFractionDigits(Math.max(0, (int) Math.ceil(nines - 1e-9) - 1));
+            return toAppendTo.append(format.format(percentile)).append('%');
+        }
+
+        @Override
+        public StringBuffer format(long nines, StringBuffer toAppendTo, FieldPosition pos) {
+            return format((double) nines, toAppendTo, pos);
+        }
+
+        @Override
+        public Number parse(String source, ParsePosition parsePosition) {
+            throw new UnsupportedOperationException();
         }
     }
 }
