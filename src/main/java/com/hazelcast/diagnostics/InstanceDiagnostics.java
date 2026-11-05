@@ -9,6 +9,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -309,7 +310,11 @@ public class InstanceDiagnostics {
 
         public LongMetricsIterator(String metricName, long startMs, long endMs) {
             this.diagnosticKey = new DiagnosticKey(DiagnosticType.TYPE_METRIC, metricName);
-            iterator = metricsIndices.subMap(startMs, endMs).entrySet().iterator();
+            if (startMs > endMs || metricsIndices.isEmpty()) {
+                this.iterator = Collections.emptyIterator();
+            } else {
+                this.iterator = metricsIndices.subMap(startMs, endMs).entrySet().iterator();
+            }
         }
 
         @Override
@@ -359,7 +364,11 @@ public class InstanceDiagnostics {
 
         public IteratorImpl(DiagnosticType type, long startMs, long endMs) {
             this.diagnosticKey = new DiagnosticKey(type);
-            this.iterator = metricsIndices.subMap(startMs, endMs).entrySet().iterator();
+            if (startMs > endMs || metricsIndices.isEmpty()) {
+                this.iterator = Collections.emptyIterator();
+            } else {
+                this.iterator = metricsIndices.subMap(startMs, endMs).entrySet().iterator();
+            }
         }
 
         @Override

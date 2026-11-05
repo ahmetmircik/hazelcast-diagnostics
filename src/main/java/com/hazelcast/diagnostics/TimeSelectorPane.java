@@ -43,17 +43,24 @@ public class TimeSelectorPane {
             return;
         }
 
-        this.startMs = Long.MAX_VALUE;
-        endMs = Long.MIN_VALUE;
+        boolean hasValidRange = false;
+        long minStart = Long.MAX_VALUE;
+        long maxEnd = Long.MIN_VALUE;
         for (InstanceDiagnostics instanceDiagnostics : instanceDiagnosticsList) {
-            if (instanceDiagnostics.startMs() < startMs) {
-                this.startMs = instanceDiagnostics.startMs();
-            }
-            if (instanceDiagnostics.endMs() > endMs) {
-                endMs = instanceDiagnostics.endMs();
+            if (instanceDiagnostics.startMs() <= instanceDiagnostics.endMs()) {
+                hasValidRange = true;
+                minStart = Math.min(minStart, instanceDiagnostics.startMs());
+                maxEnd = Math.max(maxEnd, instanceDiagnostics.endMs());
             }
         }
-        durationMs = Math.max(0, endMs - startMs);
+
+        if (!hasValidRange) {
+            this.startMs = 0;
+            durationMs = 0;
+        } else {
+            this.startMs = minStart;
+            durationMs = Math.max(0, maxEnd - minStart);
+        }
         int maxSliderValue = (int) Math.min(Integer.MAX_VALUE, durationMs);
 
         BoundedRangeModel model = rangeSlider.getModel();
